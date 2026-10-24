@@ -214,7 +214,7 @@
 | 为什么没测 | 当前机器为 Windows，无 Safari；自动化浏览器代理只有 Chromium |
 | 没测的后果 | **可能是「每次刷新都要重贴 token」**。若 Safari 不发送 Strict cookie，刷新或新标签页会掉回 401，用户看到的是「not paired」文本页 |
 | 影响范围 | 只影响 Safari 用户；Chromium 已实测通过，不影响主流程 |
-| 现状 | **Plan B1 处于「待触发、未验证」**：设计完整、`pairingMode` 切换点已在契约中定义，但代码尚未实现分支，也从未在 Safari 上跑过 |
+| 现状 | **Plan B1 处于「待触发、未验证」**：设计见本文件 §E，但 `httpContract.md` 未定义 `pairingMode`，代码也没有该分支，且从未在 Safari 上跑过 |
 | 下次怎么做 | 在 macOS Safari 打开同一 URL → 刷新 → 新标签页。**若失败，再启用 Plan B1 并重跑 §E 标注项**；不要提前切到 bearer 模式（会把已验证的 cookie 路径变成未验证） |
 
 > **不要用 Playwright WebKit 近似 Safari。** Safari 的 ITP 与 cookie 分区策略叠在 WebKit 之上，
