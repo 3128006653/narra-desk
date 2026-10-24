@@ -1,0 +1,65 @@
+{
+  "note": "FS helper 契约向量：Go/Rust 实现必须逐条通过同名场景",
+  "cases": [
+    {
+      "name": "jail 内的普通文件"
+    },
+    {
+      "name": "jail 根自身（sep boundary 的相等分支）"
+    },
+    {
+      "name": "静态 `..` 逃逸（../../etc/passwd）"
+    },
+    {
+      "name": "符号链接指向 jail 外 → 拒绝 symlink（不看目标）"
+    },
+    {
+      "name": "符号链接指向 jail 内也一律拒绝（不做目标判定）"
+    },
+    {
+      "name": "坑 1 顺序：jail 根自身是符号链接时 jail 仍生效"
+    },
+    {
+      "name": "坑 1 反面：jail 根是链接且目标外有同名目录，不能误放行"
+    },
+    {
+      "name": "前缀相同但非子目录（/workspace-evil 不被 /workspace 放行）"
+    },
+    {
+      "name": "扩展名不在白名单 → extension"
+    },
+    {
+      "name": "扩展名大小写无关（.MD 视为 .md）"
+    },
+    {
+      "name": "无扩展名 → 拒绝"
+    },
+    {
+      "name": "点开头文件（.env）→ 无扩展名，拒绝"
+    },
+    {
+      "name": "坑 2：Windows 大小写不敏感（C:\\\\WS vs c:\\\\ws 视为同一目录）"
+    },
+    {
+      "name": "坑 2：Windows 大小写不同的逃逸尝试仍被拦"
+    },
+    {
+      "name": "posix 大小写敏感：不同大小写的路径不视为同一"
+    },
+    {
+      "name": "Windows 绝对路径（C:\\\\other）不允许逃出"
+    },
+    {
+      "name": "UNC 路径（\\\\\\\\server\\\\share）被拒"
+    },
+    {
+      "name": "Unicode NFC/NFD 归一：分解形式的 é 与合成形式视为同一"
+    },
+    {
+      "name": "未绑定工作区（root 为空）→ disabled"
+    },
+    {
+      "name": "空路径 → empty"
+    }
+  ]
+}

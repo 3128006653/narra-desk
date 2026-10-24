@@ -1,0 +1,6 @@
+node_modules/
+dist/
+server/narra-desk
+server/narra-desk.exe
+*.tsbuildinfo
+*.log
