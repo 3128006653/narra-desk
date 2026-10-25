@@ -54,6 +54,17 @@ go build -trimpath -ldflags "-s -w" -o narra-desk .   # Windows 产物为 narra-
 > 没有 `-upstream` 时发送会失败（401 或连接错误），这是预期：前端不直连服务商，而是走同源代理。
 > 凭据放代理侧（`NARRA_API_KEY`）比放浏览器更安全。
 
+### 常见问题：页面显示 `not paired: open the printed URL containing ?token=...`
+
+不是 bug，是没配对。三条都常见：
+
+1. **直接输了 `http://localhost:8787/`** —— 少了 `?token=`。必须用终端打印的完整地址。
+2. **`localhost` 和 `127.0.0.1` 是两个不同来源**，cookie 不共享。在 `127.0.0.1` 配对成功，
+   再打开 `localhost` 依然未配对。**始终用打印出来的那个主机名**。
+3. **token 一次性、只属于当前进程**。已经打开过一次，或重启过进程后旧链接就失效 ——
+   重启二进制，用新打印的 URL。
+
+（配对成功后会 303 跳到 `/`，地址栏的 token 自动消失；刷新、新标签页都保持配对。）
 ### 前端开发
 
 ```bash
