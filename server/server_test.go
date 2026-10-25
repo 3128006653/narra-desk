@@ -143,8 +143,13 @@ func TestPairingFlowAndCookieFlags(t *testing.T) {
 	}
 
 	// token 一次性：只用 token、不带 cookie 再来一次 → 401
-	if rec := do(app, req(http.MethodGet, "/?token="+app.pairing.token, nil)); rec.Code != http.StatusUnauthorized {
+	// 且响应体要说明「已用过」，与「完全没带 token」区分开（否则用户会一直重试死链接）
+	rec = do(app, req(http.MethodGet, "/?token="+app.pairing.token, nil))
+	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("reused token: want 401, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "token invalid") {
+		t.Fatalf("reused token body should explain it: %q", rec.Body.String())
 	}
 
 	// 带 cookie → 200

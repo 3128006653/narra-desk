@@ -91,19 +91,30 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 4. 配对态
 	if !a.pairing.isPaired(sessionCookie(r)) {
-		if tok, ok := extractTokenFromQuery(r.URL.RawQuery); ok && a.pairing.verifyToken(tok) {
-			secret, err := a.pairing.completePairing()
-			if err != nil {
-				http.Error(w, "cannot create session", http.StatusInternalServerError)
+		if tok, ok := extractTokenFromQuery(r.URL.RawQuery); ok {
+			if a.pairing.verifyToken(tok) {
+				secret, err := a.pairing.completePairing()
+				if err != nil {
+					http.Error(w, "cannot create session", http.StatusInternalServerError)
+					return
+				}
+				a.setSessionCookie(w, secret)
+				// 原地跳转去掉 token；必须配 Referrer-Policy: no-referrer，否则 token 从 Referer 泄漏
+				target := r.URL.Path
+				if q := stripTokenFromQuery(r.URL.RawQuery); q != "" {
+					target += "?" + q
+				}
+				http.Redirect(w, r, target, http.StatusSeeOther)
 				return
 			}
-			a.setSessionCookie(w, secret)
-			// 原地跳转去掉 token；必须配 Referrer-Policy: no-referrer，否则 token 从 Referer 泄漏
-			target := r.URL.Path
-			if q := stripTokenFromQuery(r.URL.RawQuery); q != "" {
-				target += "?" + q
-			}
-			http.Redirect(w, r, target, http.StatusSeeOther)
+			// 带了 token 但无效：最常见是「已用过」或「进程重启过」。
+			// 与「完全没带 token」分开报，否则用户会一直重试同一个死链接。
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w,
+				"token invalid: already used, or issued by a previous process.\n"+
+					"restart narra-desk and open the newly printed URL.\n"+
+					"note: localhost and 127.0.0.1 are different cookie origins - keep the printed host.\n")
 			return
 		}
 		a.rejectUnpaired(w)

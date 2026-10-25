@@ -65,6 +65,8 @@ go build -trimpath -ldflags "-s -w" -o narra-desk .   # Windows 产物为 narra-
    重启二进制，用新打印的 URL。
 
 （配对成功后会 303 跳到 `/`，地址栏的 token 自动消失；刷新、新标签页都保持配对。）
+
+**带 token 但提示 `token invalid`** = 这个 token 已经用过（一次性）或属于上一个进程：重启二进制，用新打印的 URL。
 ### 前端开发
 
 ```bash
