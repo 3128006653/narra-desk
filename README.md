@@ -9,6 +9,7 @@
 | FS helper 路径 jail | **完成**，20 条契约向量在 TS 与 Go 两侧同名通过 | `src/deploy/fsJail.ts`、`server/jail.go` |
 | Go 单文件二进制 | **完成**，41 条 `go test` 通过，三平台交叉编译验证 | `server/` |
 | 端到端验收 | **9/11 项实测通过**（A1/A2-Chromium/A3/B1/B2/B3/C1/C2/C3）；**2 项未测**（A2-Safari、D1/D2 演示模式），原因与后果见 `ACCEPTANCE.md` §F | `deploy/ACCEPTANCE.md` |
+| UI 的「发送」 | ⚠️ **仍是占位回复**：`（占位回复）…`，真实模型链路已就绪但未接线（I-46）。能导入卡/开会话/编辑/版本/分页/摘要/导出，**发消息拿不到模型回复** | `src/ui/main.ts` |
 
 四份可交付文档：
 
@@ -39,6 +40,16 @@ go build -trimpath -ldflags "-s -w" -o narra-desk .   # Windows 产物为 narra-
 - `-addr` 默认 `127.0.0.1:8787`（只绑回环）；`-fsroot` 留空即关闭 FS helper
 - `/health` 可用于进程守护，但**同样要求配对**（契约 §2 的配对门没有例外路由）
 - `/v1/*` 只转发 `chat/completions`、`embeddings`、`models`
+
+### 上手（5 步）
+
+1. 双击 `server/narra-desk.exe`（或命令行加 `-webroot dist` 启动），浏览器打开打印出的 `?token=…` 地址
+2. 页面顶部「导入角色卡」→ 选一个 SillyTavern V2/V3 JSON 卡
+3. 点 `＋ 与「角色名」新开会话`
+4. 会话视图里每轮消息可操作：编辑我的输入 / 编辑助手回复 / 从此轮重新生成 / 删除此轮之后 / 版本历史；点「加载更早」向前翻页
+5. 点「导出 JSON」备份；点「申请持久化」避免浏览器清库
+
+> **注意**：「发送」目前写入占位回复（I-46），不会调用模型。其余功能（存储、编辑、版本、分页、摘要、导出、FactView 面板）都可用。
 
 ### 前端开发
 
