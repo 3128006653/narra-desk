@@ -1,15 +1,15 @@
 # Narra Desk
 
-## 当前状态（2026-10-23）
+## 当前状态（2026-10-24）
 
 | 层 | 状态 | 位置 |
 |---|---|---|
-| 领域 / 存储 / UI 纯逻辑 | **完成**，320 条 vitest 全绿（`tsc` + `vite build` 通过） | `src/`、`tests/` |
+| 领域 / 存储 / UI 纯逻辑 | **完成**，329 条 vitest 全绿（`tsc` + `vite build` 通过） | `src/`、`tests/` |
 | HTTP 安全策略 | **完成**，TS 纯逻辑 39 条 + Go 同名实现 | `src/deploy/proxyPolicy.ts`、`server/policy.go` |
 | FS helper 路径 jail | **完成**，20 条契约向量在 TS 与 Go 两侧同名通过 | `src/deploy/fsJail.ts`、`server/jail.go` |
 | Go 单文件二进制 | **完成**，41 条 `go test` 通过，三平台交叉编译验证 | `server/` |
 | 端到端验收 | **9/11 项实测通过**（A1/A2-Chromium/A3/B1/B2/B3/C1/C2/C3）；**2 项未测**（A2-Safari、D1/D2 演示模式），原因与后果见 `ACCEPTANCE.md` §F | `deploy/ACCEPTANCE.md` |
-| UI 的「发送」 | ⚠️ **仍是占位回复**：`（占位回复）…`，真实模型链路已就绪但未接线（I-46）。能导入卡/开会话/编辑/版本/分页/摘要/导出，**发消息拿不到模型回复** | `src/ui/main.ts` |
+| 聊天链路 | **已接线并在真实浏览器跑通**：导入卡 → 新开会话 → 发送 → 流式回复（经 Go 代理到 mock 上游），见 `ACCEPTANCE.md` §G | `src/domain/chatTurn.ts`、`src/ui/main.ts` |
 
 四份可交付文档：
 
@@ -40,22 +40,25 @@ go build -trimpath -ldflags "-s -w" -o narra-desk .   # Windows 产物为 narra-
 - `-addr` 默认 `127.0.0.1:8787`（只绑回环）；`-fsroot` 留空即关闭 FS helper
 - `/health` 可用于进程守护，但**同样要求配对**（契约 §2 的配对门没有例外路由）
 - `/v1/*` 只转发 `chat/completions`、`embeddings`、`models`
+- 仓库不含构建产物（dist/ 与二进制在 .gitignore）：从源码起步先 npm install && npm run build，再 go build
 
-### 上手（5 步）
+### 上手
 
-1. 双击 `server/narra-desk.exe`（或命令行加 `-webroot dist` 启动），浏览器打开打印出的 `?token=…` 地址
+1. 双击 `server/narra-desk.exe`（或命令行加 `-webroot dist -upstream <服务商地址>` 启动），浏览器打开打印出的 `?token=…` 地址
 2. 页面顶部「导入角色卡」→ 选一个 SillyTavern V2/V3 JSON 卡
 3. 点 `＋ 与「角色名」新开会话`
-4. 会话视图里每轮消息可操作：编辑我的输入 / 编辑助手回复 / 从此轮重新生成 / 删除此轮之后 / 版本历史；点「加载更早」向前翻页
-5. 点「导出 JSON」备份；点「申请持久化」避免浏览器清库
+4. 会话视图顶部两栏：**模型**（写进会话绑定，随导出包走）、**API Key**（只存本次运行的内存，刷新即失效，不进导出包）。启动时设了 `NARRA_API_KEY` 就留空，代理会替你带上
+5. 输入消息点「发送」→ 流式回复；点「停止」可中断，中断轮保存已收到的部分并可「重试」
+6. 每轮消息可操作：编辑我的输入 / 编辑助手回复 / 从此轮重新生成 / 删除此轮之后 / 版本历史；「加载更早」向前翻页；「导出 JSON」备份；「申请持久化」避免浏览器清库
 
-> **注意**：「发送」目前写入占位回复（I-46），不会调用模型。其余功能（存储、编辑、版本、分页、摘要、导出、FactView 面板）都可用。
+> 没有 `-upstream` 时发送会失败（401 或连接错误），这是预期：前端不直连服务商，而是走同源代理。
+> 凭据放代理侧（`NARRA_API_KEY`）比放浏览器更安全。
 
 ### 前端开发
 
 ```bash
 npm install          # 依赖已在 package.json 声明，锁定版本见 package-lock.json
-npm run test         # 320 passed / 0 skipped
+npm run test         # 329 passed / 0 skipped
 npm run build        # tsc -b && vite build → dist/
 npm run perf         # I-10 性能探针（长会话分页实测，不进常规测试）
 npm run dev          # vite dev，访问 http://localhost:5173

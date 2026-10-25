@@ -17,26 +17,6 @@ async function nextSeqForPanel(db: Awaited<typeof dbPromise>, sessionId: string)
   return s?.expectedSeq ?? 0;
 }
 
-/** 组装本轮并取出实际注入的事实 id（UI 纠错入口依赖） */
-async function assembleInjectedFactIds(db: Awaited<typeof dbPromise>, sessionId: string) {
-  const { selectFactsForInjection } = await import('../domain/factInjection');
-  const { assembleTurnPrompt } = await import('../domain/assemble');
-  const facts = await db.facts.where('sessionId').equals(sessionId).toArray();
-  const sel = selectFactsForInjection(facts);
-  const r = assembleTurnPrompt({
-    systemPrompt: '你是当前角色。',
-    coreAssets: [],
-    lorebook: [],
-    recentTurns: [],
-    summaries: [],
-    facts: sel,
-    holeFallback: [],
-    userInput: '',
-    contextLimit: 8000,
-  });
-  return r.injectedFactIds;
-}
-
 // 事实面板（阶段四第 5 步）
 async function mountFactPanel(db: Awaited<typeof dbPromise>, sessionId: string, currentTurn: number) {
   const host = document.getElementById('fact-panel');
@@ -63,6 +43,7 @@ import {
   listRecentTurns,
   listRevisions,
   regenerate,
+  retry,
   restoreDiscarded,
   restoreToRevision,
   switchGreeting,
@@ -79,6 +60,7 @@ import { withSessionLock } from '../domain/webLock';
 import { downloadBackup } from '../domain/exportJson';
 import { Runtime } from '../domain/runtime';
 import { httpChatClient } from '../domain/httpClient';
+import { generateAssistantReply, type GenerateReplyResult } from '../domain/chatTurn';
 import { formatIndicator } from '../domain/indicator';
 
 const app = document.getElementById('app') as HTMLDivElement;
@@ -114,16 +96,18 @@ let loadedPages = INITIAL_PAGES;
  *
  * 密钥：`resolveApiKey` 注入，本模块不接触密钥（§5.3）。
  * 默认不携带 Authorization —— 推荐部署下由代理侧持有凭证；
- * 浏览器直连时由 `appConfig.setApiKey()` 在运行期注入，**只存内存，不落主库、不进导出包**。
+ * 浏览器直连时由输入框在运行期写入 `appConfig.apiKey`，**只存内存，不落主库、不进导出包**。
  * ⚠️ 持久化加密密钥存储（Web Crypto + 独立库）推迟，见 ISSUES I-25。
  */
+const chatClient = httpChatClient({
+  baseUrl: globalThis.location?.origin ?? 'http://127.0.0.1',
+  resolveApiKey: () => appConfig.apiKey ?? '',
+});
+
 const runtimePromise = dbPromise.then(
   (db) =>
     new Runtime(db, {
-      client: httpChatClient({
-        baseUrl: globalThis.location?.origin ?? 'http://127.0.0.1',
-        resolveApiKey: () => appConfig.apiKey ?? '',
-      }),
+      client: chatClient,
       // §5.3：未配置 summarizer 时「跟随主模型」—— 由 UI 决定跟随策略，Runtime 不替用户选
       resolveSummarizer: async (sid) => {
         const s = await db.sessions.get(sid);
@@ -283,6 +267,50 @@ async function renderChat(db: Awaited<typeof dbPromise>, session: Session): Prom
 
   wrap.append(el('div', { class: 'greeting' }, [`[greeting / seq 0] ${greeting}`]));
 
+  // ---- 流式预览 / 停止 ----
+  // 预览单独占一行，流式期间只改它的 textContent，不触发整页 render
+  const preview = el('div', { class: 'stream' });
+  const stopBtn = el('button', { class: 'warn' }, ['停止']);
+  stopBtn.hidden = true;
+  /** 演示模式（file://）下没有代理，不可能调到模型 */
+  const demoMode = location.protocol === 'file:';
+
+  /**
+   * 生成一轮回复（流式期间暂停后台队列）。
+   *
+   * ⚠️ `setStreaming(true)` 的复位必须在 **finally**：异常类型多（网络/解析/取消），
+   *    逐个 catch 一定会漏；漏一次后台任务就永久停摆且没有任何报错。
+   */
+  const runGeneration = async (
+    userInput: string,
+    opts: { cutoffSeq?: number } = {},
+  ): Promise<GenerateReplyResult | null> => {
+    const rt = await runtimePromise;
+    const ac = new AbortController();
+    stopBtn.onclick = () => ac.abort();
+    stopBtn.hidden = false;
+    let acc = '';
+    preview.textContent = '';
+    rt.setStreaming(true);
+    try {
+      return await generateAssistantReply({
+        db,
+        client: chatClient,
+        sessionId: session.id,
+        userInput,
+        cutoffSeq: opts.cutoffSeq,
+        signal: ac.signal,
+        onDelta: (d) => {
+          acc += d;
+          preview.textContent = `AI：${acc}`;
+        },
+      });
+    } finally {
+      rt.setStreaming(false);
+      stopBtn.hidden = true;
+    }
+  };
+
   for (const t of turns.filter((x) => x.seq > 0)) {
     const rev = await db.revisions.get(t.activeRevisionId);
     if (!rev) continue;
@@ -333,12 +361,34 @@ async function renderChat(db: Awaited<typeof dbPromise>, session: Session): Prom
         if (v !== null) await amend(db, session.id, t.id, { assistantContent: v });
       }),
       mk('从此轮重新生成', async () => {
-        await regenerate(db, session.id, t.id, `${rev.assistantContent}（已重新生成）`);
+        // 用该轮**之前**的历史组装：cutoffSeq = 该轮 seq，避免模型看到"未来"
+        const res = await runGeneration(rev.userContent, { cutoffSeq: t.seq });
+        if (!res) return;
+        if (res.error && !res.text) {
+          alert(`重新生成失败：${res.error.message}\n原内容已保留。`);
+          return;
+        }
+        await regenerate(db, session.id, t.id, res.text || '（空回复）');
+        if (res.error) alert(`重新生成中断，已保存已收到的部分内容：${res.error.message}`);
       }),
       mk('删除此轮之后', async () => {
         await truncate(db, session.id, t.seq);
       }),
     );
+    // 中断轮：回复只写了一半，重试用 retry（不 discard 后续）
+    if (rev.status === 'interrupted') {
+      menu.append(
+        mk('重试', async () => {
+          const res = await runGeneration(rev.userContent, { cutoffSeq: t.seq });
+          if (!res) return;
+          if (res.error && !res.text) {
+            alert(`重试失败：${res.error.message}\n原内容已保留。`);
+            return;
+          }
+          await retry(db, session.id, t.id, res.text || '（空回复）');
+        }),
+      );
+    }
     if (revs.length > 1) {
       menu.append(
         mk('版本历史', async () => {
@@ -399,30 +449,82 @@ async function renderChat(db: Awaited<typeof dbPromise>, session: Session): Prom
   };
   wrap.append(el('div', { class: 'row' }, [gb, el('span', { class: 'dim' }, ['已有回复后将拒绝就地切换'])]));
 
+  // ---- 模型配置（会话级模型名 + 本次运行的密钥）----
+  // 模型名写进会话绑定（会随导出包带走，不含密钥）；
+  // 密钥只进 `appConfig`，刷新即失效 —— 见 I-25（加密持久化推迟）。
+  const modelInput = el('input', {
+    value: session.modelBinding.main.model,
+    placeholder: '模型名，如 gpt-4o-mini',
+  }) as HTMLInputElement;
+  modelInput.onchange = async () => {
+    const model = modelInput.value.trim();
+    if (!model) return;
+    await db.sessions.update(session.id, {
+      modelBinding: { ...session.modelBinding, main: { ...session.modelBinding.main, model } },
+      updatedAt: Date.now(),
+    });
+  };
+  const keyInput = el('input', {
+    type: 'password',
+    placeholder: 'API Key（仅本次运行，不落库）',
+    value: appConfig.apiKey ?? '',
+  }) as HTMLInputElement;
+  keyInput.oninput = () => {
+    appConfig.apiKey = keyInput.value;
+  };
+  wrap.append(
+    el('div', { class: 'row' }, [
+      el('span', {}, ['模型：']),
+      modelInput,
+      keyInput,
+      el('span', { class: 'dim' }, ['代理由二进制 -upstream 转发；密钥留空则用代理侧凭证']),
+    ]),
+  );
+
   // ---- 发送 ----
   const input = el('textarea', { rows: '2', placeholder: '输入消息…' }) as HTMLTextAreaElement;
-  const send = el('button', { class: 'primary' }, ['发送']);
+  const send = el('button', { class: 'primary' }, ['发送']) as HTMLButtonElement;
+  send.disabled = demoMode;
   send.onclick = async () => {
     const text = input.value.trim();
-    if (!text) return;
-    // 占位：阶段二末由 Prompt 组装器 + 真实模型调用接管。
-    // TODO（阶段二末）：真实流式开始前后要包住这段 ——
-    //   const rt = await runtimePromise;
-    //   rt.setStreaming(true);
-    //   try { … } finally { rt.setStreaming(false); }   ← 必须是 **finally，不是 catch**
-    //   异常类型多（网络/解析/用户取消），逐个 catch 一定会漏；漏掉会让后台任务永久暂停。
-    // 否则后台任务会在流式期间抢 API 配额（§5.11）。
-    // 走组装器：拿到 injectedFactIds 才能支撑聊天界面的纠错入口
-    const injected = await assembleInjectedFactIds(db, session.id);
-    await appendTurn(db, session.id, {
-      userContent: text,
-      assistantContent: `（占位回复）${text}`,
-      injectedFactIds: injected,
-    });
-    input.value = '';
-    render();
+    if (!text || send.disabled) return;
+    send.disabled = true;
+    try {
+      const res = await runGeneration(text);
+      if (!res) return;
+      // 失败也写：interrupted revision 保住用户输入，并让「重试」有落点（§4.2）
+      // expectedSeq 必须现读：渲染时拿到的 session 快照在连发两条后会过期，
+      // 传给 appendTurn 会直接抛 WriteConflictError（乐观锁），用户看到的是"发送失败"。
+      const fresh = await db.sessions.get(session.id);
+      await appendTurn(db, session.id, {
+        userContent: text,
+        assistantContent: res.text || '（空回复）',
+        injectedFactIds: res.injectedFactIds,
+        revisionStatus: res.error ? 'interrupted' : 'active',
+        expectedSeq: fresh?.expectedSeq,
+      });
+      input.value = '';
+      if (res.error) {
+        alert(`请求失败：${res.error.message}\n已保存已收到的部分内容，可点「重试」。`);
+      } else if (res.prompt.exhausted && res.prompt.hint) {
+        alert(res.prompt.hint);
+      }
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      send.disabled = demoMode;
+      render();
+    }
   };
-  wrap.append(el('div', { class: 'row' }, [input, send]));
+  wrap.append(el('div', { class: 'row' }, [input, send, stopBtn]));
+  if (demoMode) {
+    wrap.append(
+      el('div', { class: 'cap cap-unavailable' }, [
+        '演示模式（file://）无法调用模型：请用二进制启动后访问 http://127.0.0.1:8787',
+      ]),
+    );
+  }
+  wrap.append(preview);
 
   // ---- 模型绑定（会话级）----
   wrap.append(el('div', { class: 'dim' }, [
